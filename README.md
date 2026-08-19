@@ -12,31 +12,31 @@ Standalone SwiftUI library for rendering enriched Markdown on iOS. This package 
 
 Add the package via [Swift Package Manager](https://www.swift.org/documentation/package-manager/). The `Package.swift` lives at the repository root.
 
-**Xcode:** File → Add Package Dependencies… → enter the repository URL, then select the `EnrichedMarkdown` product.
+**Xcode:** File → Add Package Dependencies… → enter `https://github.com/software-mansion-labs/enriched-markdown-ios`, then select the `EnrichedMarkdown` product.
 
 **Package.swift:**
 
 ```swift
 dependencies: [
   .package(
-    url: "https://github.com/software-mansion/enriched-markdown.git",
-    branch: "main"
+    url: "https://github.com/software-mansion-labs/enriched-markdown-ios.git",
+    from: "0.1.0"
   ),
 ],
 targets: [
   .target(
     name: "YourApp",
     dependencies: [
-      .product(name: "EnrichedMarkdown", package: "EnrichedMarkdown"),
+      .product(name: "EnrichedMarkdown", package: "enriched-markdown-ios"),
     ]
   ),
 ]
 ```
 
-For local development, add a path dependency instead (as in [`apps/ios-example`](../../apps/ios-example)):
+For local development, add a path dependency to a local checkout instead:
 
 ```swift
-.package(path: "../react-native-enriched-markdown")
+.package(path: "../enriched-markdown-ios")
 ```
 
 Requirements: **iOS 16+**, SwiftUI.
@@ -59,7 +59,7 @@ struct ContentView: View {
 }
 ```
 
-See the full example in [`apps/ios-example`](../../apps/ios-example).
+See the full example in [`apps/ios-example`](https://github.com/software-mansion/enriched-markdown/tree/main/apps/ios-example).
 
 ## Styling
 
@@ -337,4 +337,6 @@ yarn workspace @enriched-markdown/ios test
 yarn workspace @enriched-markdown/ios clean
 ```
 
-These scripts run `swift build` / `swift test` / `swift package clean` from the repository root.
+These scripts run `swift build` / `swift test` / `swift package clean` from the package root.
+
+In the monorepo, `core/md4c` and `core/parser` are symlinks into the shared C++ sources at `packages/core/cpp`. When syncing this folder to the standalone repository, dereference them so real files are copied (e.g. `rsync -a --copy-links`).
