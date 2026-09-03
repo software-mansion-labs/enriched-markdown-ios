@@ -56,6 +56,10 @@ final class RendererFactory {
             return StrikethroughRenderer(factory: self, config: config)
         case .underline:
             return UnderlineRenderer(factory: self, config: config)
+        case .superscript:
+            return BaselineShiftRenderer(factory: self, attributeKey: MarkdownAttribute.superscript)
+        case .subscript:
+            return BaselineShiftRenderer(factory: self, attributeKey: MarkdownAttribute.subscript)
         case .link:
             return LinkRenderer(factory: self, config: config)
         case .lineBreak:
@@ -79,6 +83,8 @@ final class RendererFactory {
             return HeadingRenderer(factory: self, config: config)
         case .thematicBreak:
             return ThematicBreakRenderer(config: config)
+        case .blankLine:
+            return BlankLineRenderer(config: config)
         case .codeBlock:
             return CodeBlockRenderer(factory: self, config: config)
         case .blockquote:

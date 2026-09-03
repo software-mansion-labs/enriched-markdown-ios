@@ -25,7 +25,9 @@ final class TableRenderer: NodeRenderer {
             )
         }
         let attachment = TableAttachment(model: model, style: style)
-        output.append(NSAttributedString(attachment: attachment))
+        var attributes: [NSAttributedString.Key: Any] = [.attachment: attachment]
+        SourceOffsetAnnotator.tagSourceRange(in: &attributes, of: node)
+        output.append(NSAttributedString(string: "\u{FFFC}", attributes: attributes))
         output.append(NSAttributedString(string: "\n"))
         ParagraphStyleHelpers.applyBlockSpacingAfter(to: output, marginBottom: style.marginBottom)
     }
@@ -78,6 +80,7 @@ final class TableRenderer: NodeRenderer {
         factory.renderChildren(of: cellNode, into: cellOutput, context: cellContext)
         trimTrailingWhitespace(in: cellOutput)
         applyParagraphStyle(align: cellNode.attribute("align"), style: style, to: cellOutput)
+        BaselineShiftRenderer.applyShifts(to: cellOutput, config: config)
         return cellOutput
     }
 

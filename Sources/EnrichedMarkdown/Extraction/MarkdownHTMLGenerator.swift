@@ -355,6 +355,9 @@ enum MarkdownHTMLGenerator {
 
     // MARK: - Inline emission
 
+    /// Block-separator newlines only; U+2028 hard breaks are content and must survive.
+    private static let blockSeparators = CharacterSet(charactersIn: "\n\r")
+
     private static func inlineHTML(
         in text: NSAttributedString,
         range: NSRange,
@@ -383,7 +386,7 @@ enum MarkdownHTMLGenerator {
 
             let cleaned = content
                 .replacingOccurrences(of: "\u{200B}", with: "")
-                .trimmingCharacters(in: .newlines)
+                .trimmingCharacters(in: Self.blockSeparators)
             guard !cleaned.isEmpty else { return }
 
             appendStyledSegment(cleaned, attrs: attrs, into: &html, styles: styles, isCodeBlock: isCodeBlock)
@@ -417,13 +420,9 @@ enum MarkdownHTMLGenerator {
         isCodeBlock: Bool
     ) {
         let tags = inlineTags(attrs: attrs, styles: styles, isCodeBlock: isCodeBlock)
-        for tag in tags {
-            html += tag.open
-        }
+        html += tags.map(\.open).joined()
         html += escapeHTML(content).replacingOccurrences(of: "\u{2028}", with: "<br>")
-        for tag in tags.reversed() {
-            html += tag.close
-        }
+        html += tags.reversed().map(\.close).joined()
     }
 
     /// Open/close tag pairs for the run's inline traits, outermost first.
@@ -471,6 +470,12 @@ enum MarkdownHTMLGenerator {
         }
         if isStrikethrough {
             tags.append((open: "<s>", close: "</s>"))
+        }
+        if MarkdownAttributeValue.boolValue(from: attrs[MarkdownAttribute.superscript]) {
+            tags.append((open: "<sup>", close: "</sup>"))
+        }
+        if MarkdownAttributeValue.boolValue(from: attrs[MarkdownAttribute.subscript]) {
+            tags.append((open: "<sub>", close: "</sub>"))
         }
         return tags
     }

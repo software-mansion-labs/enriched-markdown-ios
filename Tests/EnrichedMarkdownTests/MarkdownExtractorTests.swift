@@ -114,7 +114,7 @@ final class MarkdownExtractorTests: XCTestCase {
             config: MarkdownSelectionMenuConfig(),
             selectedRange: range,
             attributedText: rendered,
-            sourceMarkdown: nil
+            source: nil
         )
 
         let copyMarkdown = specs.first { $0.kind == .copyMarkdown }
@@ -231,6 +231,20 @@ final class MarkdownExtractorTests: XCTestCase {
                 flags: Md4cFlags(underline: true)
             ),
             "<u>underlined</u>"
+        )
+    }
+
+    func testExtractsSuperscript() {
+        XCTAssertEqual(
+            extractSelecting("2", in: "x^2^ equals four", flags: Md4cFlags(superscript: true)),
+            "^2^"
+        )
+    }
+
+    func testExtractsSubscript() {
+        XCTAssertEqual(
+            extractSelecting("2", in: "Water is H~2~O", flags: Md4cFlags(subscript: true)),
+            "~2~"
         )
     }
 

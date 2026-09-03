@@ -27,6 +27,8 @@ enum MarkdownAttribute {
     static let headingLevel = NSAttributedString.Key("EnrichedMarkdownHeadingLevel")
     static let strong = NSAttributedString.Key("EnrichedMarkdownStrong")
     static let emphasis = NSAttributedString.Key("EnrichedMarkdownEmphasis")
+    static let superscript = NSAttributedString.Key("EnrichedMarkdownSuperscript")
+    static let `subscript` = NSAttributedString.Key("EnrichedMarkdownSubscript")
     static let blockquoteDepth = NSAttributedString.Key("EnrichedMarkdownBlockquoteDepth")
     static let blockquoteBackgroundColor = NSAttributedString.Key("EnrichedMarkdownBlockquoteBackgroundColor")
     static let listDepth = NSAttributedString.Key("EnrichedMarkdownListDepth")
@@ -35,6 +37,13 @@ enum MarkdownAttribute {
     /// Present on the first paragraph of a GFM task-list item; the value is
     /// the checked state as a boolean.
     static let taskListItem = NSAttributedString.Key("EnrichedMarkdownTaskListItem")
+    /// Present on every own paragraph of a GFM task-list item; the value is
+    /// the item's 0-based index in document order.
+    static let taskListIndex = NSAttributedString.Key("EnrichedMarkdownTaskListIndex")
+    /// UTF-8 byte range into the original markdown source that produced this
+    /// run (`NSValue`-wrapped `NSRange`; not a range into the rendered
+    /// string). Absent when the run's text is not contiguous in the source.
+    static let sourceRange = NSAttributedString.Key("EnrichedMarkdownSourceRange")
 }
 
 final class RenderContext {
@@ -45,6 +54,7 @@ final class RenderContext {
     var listDepth = 0
     var listType: ListType = .unordered
     var listItemNumber = 0
+    var taskItemIndex = 0
     var rendersBlockImage = false
 
     private static let blockSpacerTemplate: NSParagraphStyle = {
@@ -61,6 +71,7 @@ final class RenderContext {
         listDepth = 0
         listType = .unordered
         listItemNumber = 0
+        taskItemIndex = 0
         rendersBlockImage = false
     }
 

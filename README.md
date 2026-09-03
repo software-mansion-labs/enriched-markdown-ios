@@ -143,6 +143,8 @@ The `MarkdownTheme` builder supports these elements:
 | `Emphasis()` | Italic text |
 | `Strikethrough()` | Struck-through text |
 | `Underline()` | Underlined text (`Md4cFlags(underline: true)`) |
+| `Superscript()` | Superscript text (`Md4cFlags(superscript: true)`) |
+| `Subscript()` | Subscript text (`Md4cFlags(subscript: true)`) |
 | `Code()` | Inline code |
 | `CodeBlock()` | Fenced code blocks |
 | `Blockquote()` | Block quotes |
@@ -164,6 +166,7 @@ Element-specific modifiers include:
 - **CodeBlock / Blockquote:** `.borderColor`, `.borderWidth`, `.padding` / `.gapWidth`, `.cornerRadius` / `.borderRadius`
 - **List:** `.bulletColor`, `.markerColor`, `.bulletSize`, `.markerMinWidth`, `.gapWidth`, `.marginLeft`
 - **TaskList:** `.checkedColor`, `.borderColor`, `.checkmarkColor`, `.checkboxSize`, `.checkboxBorderRadius`, `.checkedTextColor`, `.checkedStrikethrough`
+- **Superscript / Subscript:** `.fontScale` (default `0.75`), `.baselineOffsetScale` (shift up/down, defaults `0.35` / `0.20`) — both fractions of the surrounding text size, and the only modifiers; font and color follow the surrounding text
 - **Table:** `.headerFontFamily(_:size:)`, `.headerTextColor`, `.headerBackground`, `.rowEvenBackground`, `.rowOddBackground`, `.borderColor`, `.borderWidth`, `.cornerRadius` / `.borderRadius`, `.cellPaddingHorizontal`, `.cellPaddingVertical`, `.align`
 - **BlockImage:** `.height`, `.borderRadius`
 - **InlineImage:** `.size`
@@ -192,17 +195,18 @@ Style and interaction handling come from the environment (`.markdownTheme`, `.on
 public struct Md4cFlags: Equatable, Sendable {
   public var underline: Bool            // __text__ renders underlined instead of bold
   public var hardSoftBreaks: Bool       // single newlines become visible line breaks
+  public var preserveBlankLines: Bool   // consecutive blank lines render as extra empty lines
   public var permissiveAutolinks: Bool  // bare URLs become links (default true)
+  public var superscript: Bool          // ^text^ renders as superscript
+  public var subscript: Bool            // ~text~ renders as subscript
   public var latexMath: Bool
-  public var superscript: Bool
-  public var subscript: Bool
   public var highlight: Bool
 
   public static let commonMark: Md4cFlags
 }
 ```
 
-`underline`, `hardSoftBreaks`, and `permissiveAutolinks` affect rendering. The remaining flags gate parsing only — their content currently renders as plain text. Tables, task lists, and strikethrough are always enabled and need no flags.
+`underline`, `hardSoftBreaks`, `preserveBlankLines`, `permissiveAutolinks`, `superscript`, and `subscript` affect rendering. The remaining flags gate parsing only — their content currently renders as plain text. Tables, task lists, and strikethrough are always enabled and need no flags.
 
 ### `.markdownTheme`
 
@@ -234,6 +238,23 @@ extension View {
 ```
 
 `onLinkPress` is called when a link is tapped. `onLinkLongPress` is called when a link is long-pressed, replacing the system link menu; without it, a long-press behaves like a press when `onLinkPress` is set. Scope either to a single view or a larger subtree.
+
+### `.onTaskListItemPress` / `.markdownTaskListItemToggleEnabled`
+
+```swift
+public struct TaskListItemPressEvent: Equatable, Sendable {
+  public let index: Int      // 0-based, in document order
+  public let checked: Bool   // state after the toggle
+  public let text: String    // first line of the item's plain text
+}
+
+extension View {
+  func onTaskListItemPress(_ action: @escaping (TaskListItemPressEvent) -> Void) -> some View
+  func markdownTaskListItemToggleEnabled(_ enabled: Bool) -> some View   // default true
+}
+```
+
+Tapping a task-list checkbox toggles its checked state in place (including the checked-item text decoration) and calls `onTaskListItemPress` with the new state. The toggle is visual — the view never mutates your `markdown` string, so persist the change from the handler if you need it back. `markdownTaskListItemToggleEnabled(false)` makes checkbox taps fully inert: no visual toggle and no `onTaskListItemPress`. Text selection and links are unaffected either way.
 
 ### `.markdownSelectable` / `.markdownSelectionColor`
 
@@ -347,10 +368,12 @@ and dark mode.
 - **Bold**, *italic*, `inline code`
 - ~~Strikethrough~~ (`~~text~~`)
 - Underline (`__text__` with `Md4cFlags(underline: true)`)
+- Superscript (`^text^` with `Md4cFlags(superscript: true)`)
+- Subscript (`~text~` with `Md4cFlags(subscript: true)`)
 - Fenced code blocks
 - Block quotes
 - Ordered and unordered lists
-- Task lists (`- [x]` / `- [ ]`, display-only checkboxes)
+- Task lists (`- [x]` / `- [ ]`, tap to toggle — see `.onTaskListItemPress`)
 - Tables (GFM: column alignment, per-cell wrapping, horizontal scrolling)
 - Links and images (block and inline)
 - Autolinked bare URLs, `www.` links, and emails (`permissiveAutolinks`, on by default)
