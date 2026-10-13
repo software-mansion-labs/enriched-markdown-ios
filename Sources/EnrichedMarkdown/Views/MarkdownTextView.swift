@@ -7,14 +7,14 @@ protocol SelectionHandleTouchReporting {
     var isTouchOnSelectionHandle: Bool { get }
 }
 
-final class MarkdownTextView: UITextView, SelectionHandleTouchReporting {
-    var styleConfig: MarkdownStyleConfig = .baseline() {
+final class MarkdownTextView: UITextView, SelectionHandleTouchReporting, MarkdownAttachmentLayoutObserver {
+    var styleConfig: MarkdownStyleConfiguration = .baseline() {
         didSet {
-            updateDecorationStyleConfig()
-            // `updateUIView` assigns this on every pass, so only a real change
-            // may drop the measurement — clearing it unconditionally would
-            // re-measure the document every frame, which is the whole point.
+            // `updateUIView` assigns this on every pass; only a real change may
+            // drop the measurement or repaint the block chrome, or every frame
+            // would re-measure and repaint the whole document.
             if styleConfig != oldValue {
+                updateDecorationStyleConfig()
                 cachedFit = nil
                 spoilerOverlays.style = styleConfig.spoiler
             }
@@ -52,7 +52,24 @@ final class MarkdownTextView: UITextView, SelectionHandleTouchReporting {
     /// restoring the text (see `MarkdownRenderStore.revealSpoiler`).
     var onSpoilerTap: ((NSRange) -> Void)?
 
+    var onCodeBlockCopy: ((CodeBlockCopy) -> Void)?
+
+    func copyCode(_ code: String, language: String?) {
+        pasteboard.string = code
+        onCodeBlockCopy?(CodeBlockCopy(code: code, language: language))
+    }
+
     private(set) lazy var spoilerOverlays = SpoilerOverlayManager(textView: self, style: styleConfig.spoiler)
+
+    private(set) var trailingSpacing = TrailingSpacing()
+
+    var isBottomMarginEnabled: Bool = false {
+        didSet {
+            if isBottomMarginEnabled != oldValue {
+                invalidateIntrinsicContentSize()
+            }
+        }
+    }
 
     /// Our tap recognizer must not steal touches from the text view's own
     /// recognizers (selection, links), so it observes simultaneously.
@@ -220,7 +237,7 @@ final class MarkdownTextView: UITextView, SelectionHandleTouchReporting {
         let point = recognizer.location(in: self)
 
         if let onSpoilerTap, let range = spoilerOverlays.concealedRange(at: point) {
-            spoilerOverlays.reveal(range: range)
+            spoilerOverlays.reveal(range: range, at: point)
             onSpoilerTap(range)
             return
         }
@@ -269,6 +286,8 @@ final class MarkdownTextView: UITextView, SelectionHandleTouchReporting {
         attributedText.enumerateAttribute(.attachment, in: range) { value, runRange, _ in
             if let table = value as? TableAttachment {
                 plain += table.plainText()
+            } else if let code = value as? CodeBlockAttachment {
+                plain += code.code
             } else {
                 plain += (attributedText.string as NSString).substring(with: runRange)
             }
@@ -284,26 +303,73 @@ final class MarkdownTextView: UITextView, SelectionHandleTouchReporting {
         // that re-evaluates at frame rate.
         if let renderedText, renderedText === attributedText { return }
         guard !(self.attributedText?.isEqual(to: attributedText) ?? false) else { return }
+        carryScrollOffsets(from: renderedText, to: attributedText)
         renderedText = attributedText
         cachedFit = nil
+        trailingSpacing = TrailingSpacing.read(from: attributedText)
         self.attributedText = attributedText
+        adoptImageAttachments(in: attributedText)
         invalidateIntrinsicContentSize()
         setDecorationNeedsDisplay()
         accessibilityTreeIsStale = true
+        spoilerOverlays.textDidChange()
         // A text change alone does not schedule a layout pass, which is
         // where spoiler overlays are reconciled.
         setNeedsLayout()
     }
 
+    /// Without this a scrolled block snaps back on every streamed chunk.
+    private func carryScrollOffsets(from previous: NSAttributedString?, to next: NSAttributedString) {
+        guard let previous else { return }
+        let predecessors = Self.scrollingAttachmentsByKind(in: previous)
+        guard predecessors.values.joined().contains(where: { $0.preservedContentOffset != .zero }) else { return }
+        for (kind, attachments) in Self.scrollingAttachmentsByKind(in: next) {
+            for (attachment, predecessor) in zip(attachments, predecessors[kind] ?? []) {
+                attachment.preservedContentOffset = predecessor.preservedContentOffset
+            }
+        }
+    }
+
+    private static func scrollingAttachmentsByKind(
+        in text: NSAttributedString
+    ) -> [ObjectIdentifier: [any HorizontallyScrollingAttachment]] {
+        var found: [ObjectIdentifier: [any HorizontallyScrollingAttachment]] = [:]
+        let options: NSAttributedString.EnumerationOptions = .longestEffectiveRangeNotRequired
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length), options: options) { value, _, _ in
+            if let attachment = value as? any HorizontallyScrollingAttachment {
+                found[ObjectIdentifier(type(of: attachment)), default: []].append(attachment)
+            }
+        }
+        return found
+    }
+
+    /// Attachments that resize after loading have no other way to reach this view.
+    /// One attribute walk per assignment, negligible next to the assignment itself.
+    private func adoptImageAttachments(in attributedText: NSAttributedString) {
+        let full = NSRange(location: 0, length: attributedText.length)
+        let options: NSAttributedString.EnumerationOptions = .longestEffectiveRangeNotRequired
+        attributedText.enumerateAttribute(.attachment, in: full, options: options) { value, _, _ in
+            (value as? MarkdownImageAttachment)?.layoutObserver = self
+        }
+    }
+
+    /// The cached measurement is wrong now, not merely stale.
+    func attachmentDidInvalidateLayout() {
+        cachedFit = nil
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+    }
+
     override func sizeThatFits(_ size: CGSize) -> CGSize {
+        let trailingInset = trailingSpacing.inset(marginEnabled: isBottomMarginEnabled)
         if let cachedFit, cachedFit.width == size.width, cachedFit.text === renderedText {
-            return CGSize(width: size.width, height: cachedFit.height)
+            return CGSize(width: size.width, height: cachedFit.height + trailingInset)
         }
         let fitted = super.sizeThatFits(size)
         if let renderedText {
             cachedFit = CachedFit(width: size.width, text: renderedText, height: fitted.height)
         }
-        return fitted
+        return CGSize(width: fitted.width, height: fitted.height + trailingInset)
     }
 
     private func accessibilityTree() -> (elements: [MarkdownAccessibilityElement], rotors: [UIAccessibilityCustomRotor]) {
@@ -326,16 +392,79 @@ final class MarkdownTextView: UITextView, SelectionHandleTouchReporting {
     /// TextKit 2 layout fragments.
     func accessibilityScreenFrame(for range: NSRange) -> CGRect {
         var union = CGRect.null
-        TextLayoutHelpers.enumerateSegmentFrames(of: range, in: self) { frame, _ in union = union.union(frame) }
+        TextLayoutHelpers.enumerateSegmentFrames(of: range, in: self) { frame, _, _ in union = union.union(frame) }
         guard !union.isNull else { return .zero }
         return UIAccessibility.convertToScreenCoordinates(union, in: self)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        layoutDecorationView()
+        trackEnclosingScrollView()
         setDecorationNeedsDisplay()
         spoilerOverlays.update()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        trackEnclosingScrollView()
+    }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        trackEnclosingScrollView()
+    }
+
+    /// UIKit reports only some moves to this view, so each report looks the
+    /// scroll view up again: a new window reaches every descendant, a move
+    /// within one window only the moved view, and an ancestor moving into or
+    /// out of a scroll view reaches this one as a trait change that lays it
+    /// out. An ancestor moving from one scroll view straight into another
+    /// reaches none of them.
+    private func trackEnclosingScrollView() {
+        observeEnclosingScrollView()
+        updateDecorationFrames()
+    }
+
+    /// The scroll view this text view sits in, whose visible region the
+    /// decoration views tile; nil leaves them covering the whole document.
+    private(set) weak var enclosingScrollView: UIScrollView?
+    private var scrollObservation: NSKeyValueObservation?
+    /// The frame both decoration views have.
+    private var decorationTile: CGRect = .zero
+
+    /// Points drawn beyond the visible region on each side, so ordinary
+    /// scrolling reuses a tile and a re-tile happens once per margin.
+    static let decorationTileMargin: CGFloat = 600
+
+    private func observeEnclosingScrollView() {
+        var view = superview
+        while let current = view, !(current is UIScrollView) {
+            view = current.superview
+        }
+        let found = view as? UIScrollView
+        guard found !== enclosingScrollView else { return }
+        enclosingScrollView = found
+        scrollObservation = found?.observe(\.contentOffset, options: []) { [weak self] _, _ in
+            self?.updateDecorationFrames()
+        }
+    }
+
+    /// A tile around the visible region, kept until the region leaves it or
+    /// the tile outgrows its budget; the whole document outside a scroll
+    /// view. Two full-height decoration bitmaps cost hundreds of megabytes
+    /// on a long document and a full repaint per display; a tile costs a
+    /// screen or two.
+    private func decorationTileFrame() -> CGRect {
+        guard let scrollView = enclosingScrollView else { return bounds }
+        let visible = convert(scrollView.bounds, from: scrollView).intersection(bounds)
+        // Off screen, or not laid out yet: nothing to show until that changes.
+        guard !visible.isEmpty else { return decorationTile }
+
+        let margin = Self.decorationTileMargin
+        if decorationTile.contains(visible), decorationTile.height <= visible.height + margin * 2 {
+            return decorationTile.intersection(bounds)
+        }
+        return visible.insetBy(dx: 0, dy: -margin).integral.intersection(bounds)
     }
 }
 
@@ -388,9 +517,16 @@ private extension MarkdownTextView {
         addSubview(foregroundView)
     }
 
-    func layoutDecorationView() {
-        backgroundDecorationView.frame = bounds
-        foregroundDecorationView.frame = bounds
+    func updateDecorationFrames() {
+        let tile = decorationTileFrame()
+        guard tile != decorationTile else { return }
+        decorationTile = tile
+        for view in [backgroundDecorationView, foregroundDecorationView] {
+            view.frame = tile
+            // `.redraw` repaints on a size change only; a moved tile shows
+            // other paragraphs.
+            view.setNeedsDisplay()
+        }
     }
 
     func updateDecorationStyleConfig() {
@@ -402,5 +538,16 @@ private extension MarkdownTextView {
     func setDecorationNeedsDisplay() {
         backgroundDecorationView.setNeedsDisplay()
         foregroundDecorationView.setNeedsDisplay()
+    }
+}
+
+extension UIView {
+    func enclosingMarkdownTextView() -> MarkdownTextView? {
+        var view: UIView? = superview
+        while let current = view {
+            if let textView = current as? MarkdownTextView { return textView }
+            view = current.superview
+        }
+        return nil
     }
 }

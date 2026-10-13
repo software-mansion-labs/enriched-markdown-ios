@@ -4,15 +4,20 @@ import UIKit
 struct MarkdownTextViewRepresentable: UIViewRepresentable {
     let attributedText: NSAttributedString
     let source: RenderedSource?
-    let styleConfig: MarkdownStyleConfig
+    let isBottomMarginEnabled: Bool
+    let styleConfig: MarkdownStyleConfiguration
+    /// The SwiftUI `openURL` action: where a tap goes when no legacy
+    /// `onLinkPress` handler is installed.
+    let openURL: (URL) -> Void
     let onLinkPress: ((URL) -> Void)?
     let onLinkLongPress: ((URL) -> Void)?
-    let selectionMenuConfig: MarkdownSelectionMenuConfig
+    let selectionMenuConfig: MarkdownSelectionMenu
     let isSelectionEnabled: Bool
     let selectionColor: Color?
     let onTaskListItemTap: ((TaskListInteraction.Hit) -> Void)?
     let spoilerOverlay: any SpoilerOverlayProvider
     let onSpoilerTap: ((NSRange) -> Void)?
+    let onCodeBlockCopy: ((CodeBlockCopy) -> Void)?
     let accessibilityLabels: MarkdownAccessibilityLabels
 
     func makeCoordinator() -> Coordinator {
@@ -27,18 +32,21 @@ struct MarkdownTextViewRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: MarkdownTextView, context: Context) {
+        context.coordinator.openURL = openURL
         context.coordinator.onLinkPress = onLinkPress
         context.coordinator.onLinkLongPress = onLinkLongPress
         context.coordinator.source = source
         context.coordinator.selectionMenuConfig = selectionMenuConfig
-        textView.onLinkPress = onLinkPress
+        textView.onLinkPress = onLinkPress ?? openURL
         textView.styleConfig = styleConfig
         textView.isSelectionEnabled = isSelectionEnabled
         textView.tintColor = selectionColor.map { UIColor($0) }
         textView.onTaskListItemTap = onTaskListItemTap
         textView.spoilerOverlays.provider = spoilerOverlay
         textView.onSpoilerTap = onSpoilerTap
+        textView.onCodeBlockCopy = onCodeBlockCopy
         textView.accessibilityLabels = accessibilityLabels
+        textView.isBottomMarginEnabled = isBottomMarginEnabled
         textView.setMarkdownAttributedText(attributedText)
     }
 
@@ -46,6 +54,7 @@ struct MarkdownTextViewRepresentable: UIViewRepresentable {
         uiView.delegate = nil
         uiView.onTaskListItemTap = nil
         uiView.onSpoilerTap = nil
+        uiView.onCodeBlockCopy = nil
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownTextView, context: Context) -> CGSize? {
@@ -55,28 +64,38 @@ struct MarkdownTextViewRepresentable: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
+        /// nil only in tests; the view always installs the environment's action.
+        var openURL: ((URL) -> Void)?
         var onLinkPress: ((URL) -> Void)?
         var onLinkLongPress: ((URL) -> Void)?
         var source: RenderedSource?
-        var selectionMenuConfig = MarkdownSelectionMenuConfig()
+        var selectionMenuConfig = MarkdownSelectionMenu()
 
-        /// Routes a link tap; returns true when a handler consumed it.
+        /// Routes a link tap to the legacy press handler, else to `openURL`;
+        /// returns true when either consumed it.
         func handleLinkPress(_ url: URL) -> Bool {
-            guard let onLinkPress else { return false }
-            onLinkPress(url)
+            if let onLinkPress {
+                onLinkPress(url)
+                return true
+            }
+            guard let openURL else { return false }
+            openURL(url)
             return true
         }
 
         /// Routes a link long-press; returns true when a handler consumed it.
-        /// Without a long-press handler, a press handler consumes every link
-        /// interaction (pre-existing behavior: suppresses the system
-        /// menu/preview and fires the press).
+        /// Without a long-press handler, a legacy press handler consumes
+        /// every link interaction (pre-existing behavior: suppresses the
+        /// system menu/preview and fires the press). `openURL` alone leaves
+        /// the long-press to the system menu.
         func handleLinkLongPress(_ url: URL) -> Bool {
             if let onLinkLongPress {
                 onLinkLongPress(url)
                 return true
             }
-            return handleLinkPress(url)
+            guard let onLinkPress else { return false }
+            onLinkPress(url)
+            return true
         }
 
         /// See `MarkdownTextView.isTouchOnSelectionHandle`: a selection knob
@@ -115,10 +134,10 @@ struct MarkdownTextViewRepresentable: UIViewRepresentable {
             defaultAction: UIAction
         ) -> UIAction? {
             guard !isGrabbingSelectionHandle(textView) else { return nil }
-            guard case .link(let url) = textItem.content, let onLinkPress else {
+            guard case .link(let url) = textItem.content, let handler = onLinkPress ?? openURL else {
                 return defaultAction
             }
-            return UIAction { _ in onLinkPress(url) }
+            return UIAction { _ in handler(url) }
         }
 
         @available(iOS 17.0, *)
